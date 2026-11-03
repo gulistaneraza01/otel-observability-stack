@@ -3,10 +3,27 @@
   "module": "index.ts",
   "type": "module",
   "private": true,
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "dev": "bun run src/index.ts"
+  },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "@types/express": "^5.0.6",
+    "pino-pretty": "^13.2.0"
   },
   "peerDependencies": {
     "typescript": "^7"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.10.0",
+    "@opentelemetry/auto-instrumentations-node": "^0.82.0",
+    "@opentelemetry/sdk-metrics": "^3.0.0",
+    "@opentelemetry/sdk-node": "^0.300.0",
+    "@opentelemetry/sdk-trace": "^3.0.0",
+    "express": "^5.3.0",
+    "helmet": "^8.3.0",
+    "pino": "^10.4.0",
+    "pino-opentelemetry-transport": "^4.0.2"
   }
 }
