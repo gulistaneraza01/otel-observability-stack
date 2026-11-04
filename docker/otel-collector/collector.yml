@@ -1,0 +1,125 @@
+# receivers:
+#   otlp:
+#     protocols:
+#       grpc:
+#         endpoint: 0.0.0.0:4317
+#       http:
+#         endpoint: 0.0.0.0:4318
+
+# processors:
+#   batch: {}
+
+# # Derives RED metrics (calls + duration histogram) directly from the trace
+# # spans passing through the collector. This is how span->metrics works.
+# connectors:
+#   spanmetrics:
+#     histogram:
+#       explicit:
+#         buckets: [10ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s]
+#     dimensions:
+#       - name: http.request.method
+#     exemplars:
+#       enabled: false
+
+# exporters:
+#   # Prometheus scrapes this endpoint (metrics pipeline)
+#   prometheus:
+#     endpoint: 0.0.0.0:8889
+#   # traces -> Tempo
+#   otlp/tempo:
+#     endpoint: tempo:4317
+#     tls:
+#       insecure: true
+#   # logs -> Loki (native OTLP ingestion)
+#   otlphttp/loki:
+#     endpoint: http://loki:3100/otlp
+#     tls:
+#       insecure: true
+
+# service:
+#   pipelines:
+#     traces:
+#       receivers: [otlp]
+#       processors: [batch]
+#       exporters: [otlp/tempo, spanmetrics]
+#     metrics:
+#       receivers: [otlp, spanmetrics]
+#       processors: [batch]
+#       exporters: [prometheus]
+#     logs:
+#       receivers: [otlp]
+#       processors: [batch]
+#       exporters: [otlphttp/loki]
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch: {}
+
+connectors:
+  spanmetrics:
+    histogram:
+      explicit:
+        buckets: [10ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s]
+    dimensions:
+      - name: http.request.method
+    exemplars:
+      enabled: false
+
+exporters:
+  # ---- local lab (unchanged) ----
+  prometheus:
+    endpoint: 0.0.0.0:8889
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+    tls:
+      insecure: true
+
+  # ---- Datadog: all three signals, one exporter ----
+  datadog:
+    # api key comes from compose env: DD_API_KEY
+    api:
+      key: ${env:DD_API_KEY}
+      # fail fast on startup if key missing/invalid
+      fail_on_invalid_key: true
+    # US default; for EU use https://datadoghq.eu etc.
+    host: https://api.datadoghq.com
+    # resource attr -> Datadog facet mapping (sensible defaults already):
+    #   service.name -> service, deployment.environment.name -> env
+    # traces skip ingest if quota-busting retries; reasonable defaults:
+    traces:
+      compute_stats_by_span_kind: true # span-level APM stats without a stats agent
+      peer_service_aggregation: true
+    # throttle log noise: only errors are reported upstream
+    sending_queue:
+      enabled: true
+      num_consumers: 4
+      queue_size: 2000
+    retry_on_failure:
+      enabled: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      # spanmetrics BEFORE datadog keeps local RED charts working as-is
+      exporters: [otlp/tempo, spanmetrics, datadog]
+    metrics:
+      receivers: [otlp, spanmetrics]
+      processors: [batch]
+      exporters: [prometheus, datadog]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/loki, datadog]

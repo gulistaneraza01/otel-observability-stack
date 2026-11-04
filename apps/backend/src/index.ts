@@ -4,14 +4,18 @@ import {
   globalErrorHandler,
   notFoundHandler,
 } from "./middleware/error.middleware";
+import { otelRequestSpan, startOpenTelemetry } from "./otel";
 import apiRoutes from "./routes/api.routes";
-import { logger } from "./utils/logger";
 import { startBackgroundWorker } from "./utils/backgroundWorker";
+import { logger } from "./utils/logger";
+
+startOpenTelemetry();
 
 const app = express();
 
 const port = process.env.PORT || 3000;
 
+app.use(otelRequestSpan);
 app.use(helmet());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

@@ -3,6 +3,7 @@ import type { Request, Response } from "express";
 import { getBackgroundState } from "../utils/backgroundWorker";
 import { HttpError } from "../utils/httpError";
 import { logger } from "../utils/logger";
+import { tracedFetch, withDbSpan } from "../otel";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -158,16 +159,15 @@ export const getMultiHop = async (req: Request, res: Response) => {
     `${req.protocol}://${req.get("host") ?? `localhost:${port()}`}`;
   const target = `${base}/api/v1/test/multi-hop?depth=${depth - 1}&workMs=${workMs}`;
 
-  const headers = new Headers();
-  const propagated = ["traceparent", "tracestate", "baggage", "x-request-id"];
-  for (const name of propagated) {
-    const value = req.get(name);
-    if (value) headers.set(name, value);
-  }
-
   let child: unknown;
   try {
-    const response = await fetch(target, { headers });
+    const passthrough: Record<string, string> = {};
+    for (const name of ["tracestate", "baggage", "x-request-id"]) {
+      const value = req.get(name);
+      if (value) passthrough[name] = value;
+    }
+
+    const response = await tracedFetch(target, { passthroughHeaders: passthrough });
     if (!response.ok) {
       throw new HttpError(502, `hop to ${target} returned HTTP ${response.status}`);
     }
@@ -192,9 +192,11 @@ export const getDb = async (req: Request, res: Response) => {
   const seconds = Math.round((ms / 1000) * 1000) / 1000;
 
   try {
+    const queryText = `select current_database() as db, pg_sleep(${seconds}::float8) as slept`;
     const start = Date.now();
-    const rows =
-      await sql`select current_database() as db, pg_sleep(${seconds}::float8) as slept`;
+    const rows = await withDbSpan("db.postgres.select", "pg_sleep", () =>
+      sql`select current_database() as db, pg_sleep(${seconds}::float8) as slept`,
+    );
     const queryMs = Date.now() - start;
 
     logger.info(

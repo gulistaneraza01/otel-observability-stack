@@ -1,0 +1,129 @@
+name: otel-observability-stack
+
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.140.0
+    container_name: otel-collector
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    volumes:
+      - ./otel-collector/collector.yml:/etc/otelcol-contrib/config.yaml:ro
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=6h # short on purpose: Thanos owns long-term
+      - --storage.tsdb.min-block-duration=2h # required by the Thanos sidecar
+      - --storage.tsdb.max-block-duration=2h
+    depends_on:
+      - otel-collector
+
+  thanos-sidecar:
+    image: thanosio/thanos:v0.39.2
+    container_name: thanos-sidecar
+    user: root # needs read access to the prometheus named volume
+    volumes:
+      - prometheus-data:/prometheus:ro
+      - ./rendered/thanos-buckets.yml:/etc/thanos/buckets.yml:ro
+    command:
+      - sidecar
+      - --tsdb.path=/prometheus
+      - --prometheus.url=http://prometheus:9090
+      - --objstore.config-file=/etc/thanos/buckets.yml
+      - --http-address=0.0.0.0:10902
+      - --grpc-address=0.0.0.0:10901
+    depends_on:
+      - prometheus
+
+  thanos-query:
+    image: thanosio/thanos:v0.39.2
+    container_name: thanos-query
+    ports:
+      - "9092:9092" # UI/API on host
+    command:
+      - query
+      - --http-address=0.0.0.0:9092
+      - --grpc-address=0.0.0.0:9091
+      - --endpoint=thanos-sidecar:10901
+      - --endpoint=thanos-store:10901
+    depends_on:
+      - thanos-sidecar
+      - thanos-store
+
+  thanos-store:
+    image: thanosio/thanos:v0.39.2
+    container_name: thanos-store
+    user: root
+    volumes:
+      - ./rendered/thanos-buckets.yml:/etc/thanos/buckets.yml:ro
+      - thanos-store-data:/var/thanos/store
+    command:
+      - store
+      - --objstore.config-file=/etc/thanos/buckets.yml
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+
+  thanos-compactor:
+    image: thanosio/thanos:v0.39.2
+    container_name: thanos-compactor
+    user: root
+    volumes:
+      - ./rendered/thanos-buckets.yml:/etc/thanos/buckets.yml:ro
+      - thanos-compact-data:/var/thanos/compact
+    command:
+      - compact
+      - --wait # continuous mode: without it the compactor runs once and exits
+      - --objstore.config-file=/etc/thanos/buckets.yml
+      - --data-dir=/var/thanos/compact
+      - --http-address=0.0.0.0:10903
+      - --downsampling.disable # keep block structure simple for learning
+
+  loki:
+    image: grafana/loki:3.6.7
+    container_name: loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./rendered/loki-loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+
+  tempo:
+    image: grafana/tempo:3.1.1
+    container_name: tempo
+    ports:
+      - "3200:3200"
+    volumes:
+      - ./rendered/tempo-tempo.yml:/etc/tempo/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    command:
+      - -config.file=/etc/tempo/tempo.yaml
+
+  grafana:
+    image: grafana/grafana-oss:11.6.0
+    container_name: grafana
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+
+volumes:
+  prometheus-data:
+  thanos-store-data:
+  thanos-compact-data:
+  loki-data:
+  tempo-data:
+  grafana-data:
